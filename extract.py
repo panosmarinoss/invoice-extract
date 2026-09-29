@@ -3,7 +3,8 @@ import base64, json, sys
 from typing import List, Optional
 from pydantic import BaseModel
 import anthropic
-
+from dotenv import load_dotenv
+load_dotenv()
 
 class LineItem(BaseModel):
     description: Optional[str] = None
