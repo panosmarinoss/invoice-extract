@@ -59,7 +59,6 @@ rather than returning.
 (T for Τ, A for Α, o for ο) unless the prompt forbids it. Visually identical,
 byte-different — silently breaks ERP lookups on invoice numbers.
 
-Further findings in [NOTES.md](NOTES.md).
 
 ## Running it
 
