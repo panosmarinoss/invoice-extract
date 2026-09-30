@@ -6,7 +6,6 @@ import anthropic
 from dotenv import load_dotenv
 load_dotenv()
 
-
 class LineItem(BaseModel):
     description: Optional[str] = None
     quantity: Optional[float] = None
@@ -17,7 +16,7 @@ class LineItem(BaseModel):
 class Invoice(BaseModel):
     vendor_name: Optional[str] = None
     invoice_number: Optional[str] = None
-    invoice_date: Optional[str] = None
+    invoice_date: Optional[str] = None  # ISO 8601: YYYY-MM-DD
     currency: Optional[str] = None
     line_items: List[LineItem] = []
     subtotal: Optional[float] = None
@@ -25,27 +24,7 @@ class Invoice(BaseModel):
     total_amount: Optional[float] = None
 
 
-
 client = anthropic.Anthropic()
-
-RULES = (
-    "Extract the invoice fields. Use null for anything not present on the "
-    "document. Do not guess or infer values that aren't printed.\n"
-    "- invoice_date MUST be ISO 8601 (YYYY-MM-DD). Greek and EU documents "
-    "print DD/MM/YYYY or DD.MM.YYYY; convert them.\n"
-    "- invoice_number: the complete identifier exactly as printed, including "
-    "any document-type and series prefix (e.g. TDA-1-335328, not 335328).\n"
-    "- vendor_name: the legal entity name exactly as printed, without brand "
-    "or franchise names in parentheses.\n"
-    "- subtotal: the net value before VAT.\n"
-    "- total_amount: the invoice total including VAT. If the document also "
-    "shows an amount payable after withholding tax, use the invoice total, "
-    "not the payable amount.\n"
-    "- line_item.total: the NET amount for that line, before VAT."
-    "- Preserve the original script exactly. Do not transliterate Greek "
-    "characters into Latin lookalikes (Τ vs T, Α vs A, Ο vs O, Ε vs E). "
-    "If the document prints Greek letters, return Greek letters.\n"
-)
 
 
 def extract(pdf_path: str) -> Invoice:
@@ -68,23 +47,21 @@ def extract(pdf_path: str) -> Invoice:
                  "source": {"type": "base64",
                             "media_type": "application/pdf",
                             "data": data}},
-                {"type": "text", "text": RULES},
+                {"type": "text",
+                 "text": "Extract the invoice fields. Use null for anything "
+                         "not present on the document. Do not guess or infer "
+                         "values that aren't printed."},
             ],
         }],
     )
 
     for block in resp.content:
         if block.type == "tool_use":
-            inv = Invoice(**block.input)
-            if all(getattr(inv, f) is None for f in
-                   ("vendor_name", "invoice_number", "invoice_date",
-                    "subtotal", "total_amount")) and not inv.line_items:
-                raise RuntimeError("Empty extraction - model returned no fields")
-            return inv
+            return Invoice(**block.input)
     raise RuntimeError("Model returned no tool_use block")
 
 
-def validate(inv: Invoice):
+def validate(inv: Invoice) -> tuple[List[str], List[str]]:
     """Catch arithmetic the model got wrong.
     Returns (problems, checks_run) so a silent skip can't look like a pass."""
     problems = []
@@ -92,9 +69,6 @@ def validate(inv: Invoice):
 
     totals = [li.total for li in inv.line_items if li.total is not None]
     line_sum = round(sum(totals), 2) if totals else None
-    gross = None
-    if inv.subtotal is not None:
-        gross = round(inv.subtotal + (inv.tax_amount or 0), 2)
 
     if None not in (inv.subtotal, inv.tax_amount, inv.total_amount):
         checks_run.append("subtotal + tax == total")
@@ -105,17 +79,13 @@ def validate(inv: Invoice):
             )
 
     if line_sum is not None and inv.subtotal is not None:
-        if abs(line_sum - inv.subtotal) <= 0.02:
-            checks_run.append("line items == subtotal (net)")
-        elif gross is not None and abs(line_sum - gross) <= 0.02:
-            checks_run.append("line items == total (gross basis)")
-        else:
-            checks_run.append("line items vs subtotal")
+        checks_run.append("line items == subtotal")
+        if abs(line_sum - inv.subtotal) > 0.02:
             problems.append(
-                f"line items sum to {line_sum}, matching neither subtotal "
-                f"{inv.subtotal} nor total {gross}"
+                f"line items sum to {line_sum}, subtotal reads {inv.subtotal}"
             )
 
+    # Fallback: no subtotal printed, but we can still check the line items
     if line_sum is not None and inv.subtotal is None and inv.total_amount is not None:
         checks_run.append("line items == total (no subtotal on document)")
         expected = round(line_sum + (inv.tax_amount or 0), 2)
@@ -130,7 +100,6 @@ def validate(inv: Invoice):
 if __name__ == "__main__":
     invoice = extract(sys.argv[1])
     print(json.dumps(invoice.model_dump(), indent=2, ensure_ascii=False))
-
     issues, checks = validate(invoice)
 
     if not checks:
