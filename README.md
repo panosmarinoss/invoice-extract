@@ -16,8 +16,10 @@ the hard part, and it's the only part a business can act on.
 
 This pipeline reports three states, never two:
 
-| State |     | Meaning |
-|---|---
+This pipeline reports three states, never two:
+
+| State | Meaning |
+|---|---|
 | **passed** | Arithmetic independently verified against the document |
 | **flagged** | Extracted, but the numbers do not reconcile |
 | **unverified** | Not enough fields present to check anything |
